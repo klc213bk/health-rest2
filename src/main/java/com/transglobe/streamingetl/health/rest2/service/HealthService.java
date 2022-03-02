@@ -8,17 +8,27 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.sql.CallableStatement;
 import java.sql.Connection;
 import java.sql.DriverManager;
 import java.sql.PreparedStatement;
 import java.sql.ResultSet;
 import java.sql.SQLException;
 import java.sql.Statement;
+import java.sql.Timestamp;
+import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
 
+import org.apache.commons.dbcp2.BasicDataSource;
 import org.apache.commons.io.IOUtils;
+import org.apache.commons.lang3.exception.ExceptionUtils;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Value;
@@ -36,10 +46,14 @@ import com.transglobe.streamingetl.health.rest2.common.CreateTopic;
 @Service
 public class HealthService {
 	static final Logger LOG = LoggerFactory.getLogger(HealthService.class);
+
+	private static final String CONSUMER_GROUP = "health2";
+
+	public static final String CLIENT_ID = "health2-1";
 	
 	static Integer HEALTH_NUM_PARTITIONS = 1; 
 	static Short HEALTH_REPLICATION_FACTOR = 2;
-	
+
 	@Value("${tglminer.db.driver}")
 	private String tglminerDbDriver;
 
@@ -51,9 +65,21 @@ public class HealthService {
 
 	@Value("${tglminer.db.password}")
 	private String tglminerDbPassword;
-	
+
 	@Value("${kafka.rest.url}")
 	private String kafkaRestUrl;
+	
+	@Value("${kafka.bootstrap.server}")
+	private String kafkaBootstrapServer;
+
+	private ScheduledExecutorService shbe; // heartbeat
+	private ScheduledFuture<?> shb;	// heartbeat
+
+	private BasicDataSource tglminerConnPool;
+
+	private ExecutorService heartbeatConsumerExecutor = null;
+
+	private HeartbeatConsumer heartbeatConsumer = null;
 	
 	public void cleanup() throws Exception{
 		Connection conn = null;
@@ -158,6 +184,150 @@ public class HealthService {
 
 
 	}
+	public void startHeartbeat() throws Exception {
+		LOG.info(">>>>>>>>>>>> startHeartbeat...");
+
+		if (shbe != null && !shbe.isTerminated()) {
+			LOG.info(">>>>>>>>>>>> heartbeat beat executor is not terminated, do nothing and return...");
+			return;
+		}
+		shbe = Executors.newScheduledThreadPool(1);
+
+		Runnable insertHeartbeat = () -> {
+			Connection conn = null;
+			CallableStatement cstmt = null;
+
+			try {	
+				Class.forName(tglminerDbDriver);
+				conn = DriverManager.getConnection(tglminerDbUrl, tglminerDbUsername, tglminerDbPassword);
+
+				cstmt = conn.prepareCall("{call SP2_INS_HEARTBEAT(?)}");
+
+				long currMillis = System.currentTimeMillis();
+				Timestamp ts = new Timestamp(currMillis);
+				cstmt.setTimestamp(1, ts);
+				cstmt.execute();
+
+			} catch (Exception e1) {
+				LOG.error(">>> err msg:{}, stacktrace={}", ExceptionUtils.getMessage(e1), ExceptionUtils.getStackTrace(e1));
+			} finally {
+				if (cstmt != null)
+					try {
+						cstmt.close();
+					} catch (SQLException e1) {
+						LOG.error(">>> err msg:{}, stacktrace={}", ExceptionUtils.getMessage(e1), ExceptionUtils.getStackTrace(e1));
+					}
+				if (conn != null)
+					try {
+						conn.close();
+					} catch (SQLException e) {
+						LOG.error(">>> err msg:{}, stacktrace={}", ExceptionUtils.getMessage(e), ExceptionUtils.getStackTrace(e));
+					}
+			}	
+
+		};
+		// initial delay = 5, repeat the task every 60 seconds
+		shb = shbe.scheduleAtFixedRate(insertHeartbeat, 5, 60, TimeUnit.SECONDS);
+
+
+		Runtime.getRuntime().addShutdownHook(new Thread() {
+			@Override
+			public void run() {
+
+				stopHeartbeat();
+
+			}
+		});
+
+	}
+	public void stopHeartbeat() {
+		LOG.info(">>>>>>>>>>>> stopHeartbeat ");
+
+		if (shb != null) {
+			shb.cancel(true);
+
+			shbe.shutdown();
+		}
+
+
+		LOG.info(">>>>>>>>>>>> stopHeartbeat done !!!");
+
+	}
+	public boolean startHeartbeatConsumer() throws Exception {
+		LOG.info(">>>>>>>>>>>> startHeartbeatConsumer...");
+		boolean result = true;
+
+		if (tglminerConnPool == null) {
+			tglminerConnPool = getConnectionPool();
+		} else if (tglminerConnPool.isClosed()) {
+			tglminerConnPool.restart();
+		} 
+
+		List<String> topicList = new ArrayList<>();
+		topicList.add(HealthTopicEnum.HEARTBEAT.getTopic());
+
+		heartbeatConsumerExecutor = Executors.newFixedThreadPool(1);
+
+		//		String groupId1 = config.groupId1;
+		heartbeatConsumer = new HeartbeatConsumer(CLIENT_ID, CONSUMER_GROUP, kafkaBootstrapServer, topicList, tglminerConnPool);
+		heartbeatConsumerExecutor.submit(heartbeatConsumer);
+
+		LOG.info(">>>>>>>>>>>> started Done!!!");
+
+		Runtime.getRuntime().addShutdownHook(new Thread() {
+			@Override
+			public void run() {
+
+				stopHeartbeatConsumer();
+
+			}
+		});
+
+		return result;
+	}
+	public boolean stopHeartbeatConsumer() {
+		LOG.info(">>>>>>>>>>>> stopHeartbeatConsumer ");
+		boolean result = true;
+		if (heartbeatConsumerExecutor != null && heartbeatConsumer != null) {
+			heartbeatConsumer.shutdown();
+
+			try {
+				if (tglminerConnPool != null) tglminerConnPool.close();
+			} catch (Exception e) {
+				result = false;
+				LOG.error(">>>message={}, stack trace={}", e.getMessage(), ExceptionUtils.getStackTrace(e));
+			}
+
+			heartbeatConsumerExecutor.shutdown();
+			if (!heartbeatConsumerExecutor.isTerminated()) {
+				heartbeatConsumerExecutor.shutdownNow();
+
+				try {
+					heartbeatConsumerExecutor.awaitTermination(3000, TimeUnit.SECONDS);
+				} catch (InterruptedException e) {
+					result = false;
+					LOG.error(">>> ERROR!!!, msg={}, stacetrace={}",
+							ExceptionUtils.getMessage(e), ExceptionUtils.getStackTrace(e));
+				}
+
+			}
+
+		}
+
+		LOG.info(">>>>>>>>>>>> stopHeartbeatConsumer done !!!");
+
+		return result;
+	}
+	private BasicDataSource getConnectionPool() {
+		BasicDataSource connPool = new BasicDataSource();
+		connPool.setUrl(tglminerDbUrl);
+		connPool.setDriverClassName(tglminerDbDriver);
+		connPool.setUsername(tglminerDbUsername);
+		connPool.setPassword(tglminerDbPassword);
+		connPool.setMaxTotal(3);
+
+		return connPool;
+	}
 	private void executeScript(Connection conn, String script) throws Exception {
 
 		Statement stmt = null;
@@ -178,7 +348,7 @@ public class HealthService {
 		createTopic.setNumPartitions(numPartitions);
 		createTopic.setReplicationFactor(replicationFactor);
 		createTopic.setTopic(topic);
-		
+
 		ObjectMapper mapper = new ObjectMapper();
 		String jsonStr = mapper.writeValueAsString(createTopic);
 
@@ -192,7 +362,7 @@ public class HealthService {
 		String url = kafkaRestUrl + "/listTopics";
 		String response = restService(url, "GET");
 
-//		LOG.info(">>>>>>>>>>>> response={} ", response);
+		//		LOG.info(">>>>>>>>>>>> response={} ", response);
 
 		ObjectMapper mapper = new ObjectMapper();
 		JsonNode jsonNode = mapper.readTree(response);
@@ -203,7 +373,7 @@ public class HealthService {
 		return new HashSet<>(topicList);
 	}
 	private void executeSqlScriptFromFile(Connection conn, String file) throws Exception {
-		
+
 		Statement stmt = null;
 		try {
 
@@ -218,7 +388,7 @@ public class HealthService {
 				throw e;
 			}
 
-		
+
 		} finally {
 			if (stmt != null) stmt.close();
 		}
@@ -235,7 +405,7 @@ public class HealthService {
 
 	}
 	private String restService(String urlStr, String requestMethod) throws Exception {
-		
+
 		HttpURLConnection httpConn = null;
 		URL url = null;
 		try {
@@ -275,11 +445,11 @@ public class HealthService {
 			os = httpConn.getOutputStream();
 			byte[] input = jsonStr.getBytes("utf-8");
 			os.write(input, 0, input.length);
-			
-			
-//			httpConn.setRequestMethod(requestMethod);
+
+
+			//			httpConn.setRequestMethod(requestMethod);
 			int responseCode = httpConn.getResponseCode();
-			
+
 			in = new BufferedReader(new InputStreamReader(httpConn.getInputStream(), "utf-8"));
 			StringBuffer response = new StringBuffer();
 			String readLine = null;

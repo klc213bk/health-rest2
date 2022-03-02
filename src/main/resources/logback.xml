@@ -1,5 +1,5 @@
 <configuration>
-	<property name="LOG_DIR" value="/data/v2/health-rest2/logs" />
+	<property name="LOG_DIR" value="/data/v2/health-rest/logs" />
 	<property name="LOG_FILE" value="health-rest" />
 	<appender name="STDOUT" class="ch.qos.logback.core.ConsoleAppender">
 		<encoder>

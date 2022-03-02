@@ -90,6 +90,73 @@ public class HealthController {
 		
 		return new ResponseEntity<Object>(objectNode, HttpStatus.OK);
 	}
-	
-	
+	@PostMapping(path="/startHeartbeat", produces=MediaType.APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public ResponseEntity<Object> startHeartbeat() {
+		LOG.info(">>>>controller startHeartbeat is called");
+		
+		ObjectNode objectNode = mapper.createObjectNode();
+		
+		try {
+			healthService.startHeartbeat();
+			objectNode.put("returnCode", "0000");
+		} catch (Exception e) {
+			String errMsg = ExceptionUtils.getMessage(e);
+			String stackTrace = ExceptionUtils.getStackTrace(e);
+			objectNode.put("returnCode", "-9999");
+			objectNode.put("errMsg", errMsg);
+			objectNode.put("returnCode", stackTrace);
+			LOG.error(">>> errMsg={}, stacktrace={}",errMsg,stackTrace);
+		}
+		
+		LOG.info(">>>>controller startHeartbeat finished ");
+		
+		return new ResponseEntity<Object>(objectNode, HttpStatus.OK);
+	}
+	@PostMapping(path="/startHeartbeatConsumer", produces=MediaType.APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public ResponseEntity<Object> startHeartbeatConsumer() {
+		LOG.info(">>>>controller startHeartbeatConsumer is called");
+		
+		ObjectNode objectNode = mapper.createObjectNode();
+		
+		try {
+			healthService.startHeartbeatConsumer();
+			objectNode.put("returnCode", "0000");
+		} catch (Exception e) {
+			String errMsg = ExceptionUtils.getMessage(e);
+			String stackTrace = ExceptionUtils.getStackTrace(e);
+			objectNode.put("returnCode", "-9999");
+			objectNode.put("errMsg", errMsg);
+			objectNode.put("returnCode", stackTrace);
+			LOG.error(">>> errMsg={}, stacktrace={}",errMsg,stackTrace);
+		}
+		
+		LOG.info(">>>>controller startHeartbeatConsumer finished ");
+		
+		return new ResponseEntity<Object>(objectNode, HttpStatus.OK);
+	}
+	@PostMapping(path="/stopHeartbeatConsumer", produces=MediaType.APPLICATION_JSON_VALUE)
+	@ResponseBody
+	public ResponseEntity<Object> stopHeartbeatConsumer() {
+		LOG.info(">>>>controller stopHeartbeatConsumer is called");
+		
+		ObjectNode objectNode = mapper.createObjectNode();
+		
+		try {
+			healthService.stopHeartbeatConsumer();
+			objectNode.put("returnCode", "0000");
+		} catch (Exception e) {
+			String errMsg = ExceptionUtils.getMessage(e);
+			String stackTrace = ExceptionUtils.getStackTrace(e);
+			objectNode.put("returnCode", "-9999");
+			objectNode.put("errMsg", errMsg);
+			objectNode.put("returnCode", stackTrace);
+			LOG.error(">>> errMsg={}, stacktrace={}",errMsg,stackTrace);
+		}
+		
+		LOG.info(">>>>controller stopHeartbeatConsumer finished ");
+		
+		return new ResponseEntity<Object>(objectNode, HttpStatus.OK);
+	}
 }
