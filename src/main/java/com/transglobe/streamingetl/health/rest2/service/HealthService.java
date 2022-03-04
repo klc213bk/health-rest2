@@ -47,9 +47,9 @@ import com.transglobe.streamingetl.health.rest2.common.CreateTopic;
 public class HealthService {
 	static final Logger LOG = LoggerFactory.getLogger(HealthService.class);
 
-	private static final String CONSUMER_GROUP = "health2";
+	private static final String CONSUMER_GROUP = "healthgrp";
 
-	public static final String CLIENT_ID = "health2-1";
+	public static final String CLIENT_ID_HEARTBEAT = "health";
 	
 	static Integer HEALTH_NUM_PARTITIONS = 1; 
 	static Short HEALTH_REPLICATION_FACTOR = 2;
@@ -269,7 +269,7 @@ public class HealthService {
 		heartbeatConsumerExecutor = Executors.newFixedThreadPool(1);
 
 		//		String groupId1 = config.groupId1;
-		heartbeatConsumer = new HeartbeatConsumer(CLIENT_ID, CONSUMER_GROUP, kafkaBootstrapServer, topicList, tglminerConnPool);
+		heartbeatConsumer = new HeartbeatConsumer(CLIENT_ID_HEARTBEAT, CONSUMER_GROUP, kafkaBootstrapServer, topicList, tglminerConnPool);
 		heartbeatConsumerExecutor.submit(heartbeatConsumer);
 
 		LOG.info(">>>>>>>>>>>> started Done!!!");
@@ -435,21 +435,27 @@ public class HealthService {
 		OutputStream os = null;
 		BufferedReader in = null;
 		try {
+			byte[] input = jsonStr.getBytes("utf-8");
+			
 			url = new URL(urlStr);
 			httpConn = (HttpURLConnection)url.openConnection();
 			httpConn.setRequestMethod("POST");
-			httpConn.setRequestProperty("Content-Type", "application/json;utf-8" );
+			httpConn.setRequestProperty("Charset", "UTF-8");
+			httpConn.setRequestProperty("Content-Type", "application/json" );
 			httpConn.setRequestProperty("Accept", "application/json" );
+			httpConn.setRequestProperty("Content-Length", String.valueOf(input.length));
 			httpConn.setDoOutput(true);
 
 			os = httpConn.getOutputStream();
-			byte[] input = jsonStr.getBytes("utf-8");
-			os.write(input, 0, input.length);
-
+			
+			os.write(input);
+			os.flush();
+			os.close();
 
 			//			httpConn.setRequestMethod(requestMethod);
 			int responseCode = httpConn.getResponseCode();
-
+			LOG.info(">>>>>>>>>>>> responseCode={} ", responseCode);
+			
 			in = new BufferedReader(new InputStreamReader(httpConn.getInputStream(), "utf-8"));
 			StringBuffer response = new StringBuffer();
 			String readLine = null;

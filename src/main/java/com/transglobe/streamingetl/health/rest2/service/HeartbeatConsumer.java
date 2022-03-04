@@ -148,15 +148,17 @@ public class HeartbeatConsumer implements Runnable {
 				JsonNode payload = jsonNode.get("payload");
 				Long scn = Long.valueOf(payload.get("SCN").asText());
 				Long commitScn = Long.valueOf(payload.get("COMMIT_SCN").asText());
-				String rowId = payload.get("ROW_ID").asText();		
+				String rowId = payload.get("ROW_ID").asText();
+				String connector = (payload.get("CONNECTOR") == null)? "default" : payload.get("CONNECTOR").asText();
 				JsonNode payLoadData = payload.get("data");
 				long hartBeatTimeMs = Long.valueOf(payLoadData.get("HEARTBEAT_TIME").asText());
 				Timestamp heartbeatTime = new Timestamp(hartBeatTimeMs);
 				
 				Timestamp currTs = new Timestamp(System.currentTimeMillis());
 				
+				String consumerClient = String.format("%s(%s)", clientId, connector);
 				cstmt = conn.prepareCall("{call SP2_UPD_CONSUMER_RECEIVED(?,?,?)}");
-				cstmt.setString(1,  clientId);
+				cstmt.setString(1,  consumerClient);
 				cstmt.setTimestamp(2,  heartbeatTime);
 				cstmt.setTimestamp(3,  currTs);
 				cstmt.execute();
