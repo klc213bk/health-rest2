@@ -132,16 +132,18 @@ public class HeartbeatConsumer implements Runnable {
 		Connection conn = null;
 		CallableStatement cstmt = null;
 		PreparedStatement pstmt = null;
-		String sql = null;
 		ConsumerRecord<String, String> recordEx = null;
 		try {
 			conn = tglminerConnPool.getConnection();
 			for (ConsumerRecord<String, String> record : buffer) {
 				recordEx = record;
-				
 //				logger.info("   >>>record topic={}, key={},value={},offset={}", record.topic(), record.key(), record.value(), record.offset());
-	
+				
 				ObjectMapper objectMapper = new ObjectMapper();
+				
+				JsonNode jsonNodeKey = objectMapper.readTree(record.key());
+				String connectorKey = jsonNodeKey.get("payload").asText();
+				
 				objectMapper.disable(DeserializationFeature.FAIL_ON_UNKNOWN_PROPERTIES);
 
 				JsonNode jsonNode = objectMapper.readTree(record.value());
@@ -149,14 +151,13 @@ public class HeartbeatConsumer implements Runnable {
 				Long scn = Long.valueOf(payload.get("SCN").asText());
 				Long commitScn = Long.valueOf(payload.get("COMMIT_SCN").asText());
 				String rowId = payload.get("ROW_ID").asText();
-				String connector = (payload.get("CONNECTOR") == null)? "default" : payload.get("CONNECTOR").asText();
 				JsonNode payLoadData = payload.get("data");
 				long hartBeatTimeMs = Long.valueOf(payLoadData.get("HEARTBEAT_TIME").asText());
 				Timestamp heartbeatTime = new Timestamp(hartBeatTimeMs);
 				
 				Timestamp currTs = new Timestamp(System.currentTimeMillis());
 				
-				String consumerClient = String.format("%s(%s)", clientId, connector);
+				String consumerClient = String.format("%s(%s)", clientId, connectorKey);
 				cstmt = conn.prepareCall("{call SP2_UPD_CONSUMER_RECEIVED(?,?,?)}");
 				cstmt.setString(1,  consumerClient);
 				cstmt.setTimestamp(2,  heartbeatTime);
